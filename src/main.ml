@@ -13,9 +13,8 @@ let () =
   listen server_socket 1;
 
   Printf.eprintf "Listenning on port 6379!\n";
-  flush_all ();
-
   (* Ensure that the message is printed *)
+  flush_all ();
 
   (* Accept connections on the given socket *)
   let client_socket, _client_addr = accept server_socket in
@@ -23,17 +22,23 @@ let () =
   (* Read the request from client *)
   let buf_len = 1024 in
   let buf = Bytes.create buf_len in
-  let bytes_read = read client_socket buf 0 buf_len in
 
-  Printf.eprintf "Received %d bytes from client\n" bytes_read;
-
-  let req = Bytes.sub_string buf 0 bytes_read in
-  Printf.eprintf "Request is: %s\n" req;
-  (* Currently we are only supporting PING *)
-  let pong_str = "+PONG\r\n" in
-  let _bytes_written =
-    write client_socket (Bytes.of_string pong_str) 0 (String.length pong_str)
+  let rec read_loop () =
+    match read client_socket buf 0 buf_len with
+    | 0 -> Printf.eprintf "Client disconnected"
+    | bytes_read ->
+        Printf.eprintf "Received %d bytes from client\n" bytes_read;
+        let req = Bytes.sub_string buf 0 bytes_read in
+        Printf.eprintf "Request is: %s\n" req;
+        (* Currently we are only supporting PING *)
+        let pong_str = "+PONG\r\n" in
+        let _bytes_written =
+          write client_socket (Bytes.of_string pong_str) 0
+            (String.length pong_str)
+        in
+        read_loop ()
   in
+  read_loop ();
 
   close client_socket;
   close server_socket
