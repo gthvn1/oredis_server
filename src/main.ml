@@ -1,44 +1,46 @@
-open Unix
+open Lwt.Infix (* Allow to use >>= *)
 
-let () =
-  (* Create a TCP server socket *)
-  let server_socket = socket PF_INET SOCK_STREAM 0 in
-  setsockopt server_socket SO_REUSEADDR true;
-
-  (* bind a socket to the localhost and port 6379 *)
-  bind server_socket (ADDR_INET (inet_addr_of_string "127.0.0.1", 6379));
-
-  (* Setup the socket to receive connection request.
-     Currently we are accepting 1 pending request *)
-  listen server_socket 1;
-
-  Printf.eprintf "Listenning on port 6379!\n";
-  (* Ensure that the message is printed *)
-  flush_all ();
-
-  (* Accept connections on the given socket *)
-  let client_socket, _client_addr = accept server_socket in
-
+let handle_connection socket =
   (* Read the request from client *)
   let buf_len = 1024 in
   let buf = Bytes.create buf_len in
 
   let rec read_loop () =
-    match read client_socket buf 0 buf_len with
-    | 0 -> Printf.eprintf "Client disconnected"
-    | bytes_read ->
-        Printf.eprintf "Received %d bytes from client\n" bytes_read;
-        let req = Bytes.sub_string buf 0 bytes_read in
-        Printf.eprintf "Request is: %s\n" req;
-        (* Currently we are only supporting PING *)
-        let pong_str = "+PONG\r\n" in
-        let _bytes_written =
-          write client_socket (Bytes.of_string pong_str) 0
-            (String.length pong_str)
-        in
-        read_loop ()
+    Lwt_unix.read socket buf 0 buf_len >>= fun bytes_read ->
+    if bytes_read = 0 then Lwt_io.eprintf "Client disconnected\n"
+    else
+      let req = Bytes.sub_string buf 0 bytes_read in
+      Lwt_io.eprintf "Received %d bytes from client\n" bytes_read >>= fun () ->
+      Lwt_io.eprintf "Request is: %s\n" req >>= fun () ->
+      (* Currently we are only supporting PING *)
+      let pong_str = "+PONG\r\n" in
+      Lwt_unix.write socket (Bytes.of_string pong_str) 0
+        (String.length pong_str)
+      >>= fun _ -> read_loop ()
   in
-  read_loop ();
+  read_loop () >>= fun () -> Lwt_unix.close socket
 
-  close client_socket;
-  close server_socket
+let server () =
+  (* Create a TCP server socket: this is a synchrone function so no need to >>= *)
+  let server_socket = Lwt_unix.(socket PF_INET SOCK_STREAM 0) in
+  Lwt_unix.(setsockopt server_socket SO_REUSEADDR true);
+
+  (* bind a socket to the localhost and port 6379: this one is asynchrone so we use >>= *)
+  Lwt_unix.bind server_socket
+    (Lwt_unix.ADDR_INET (Unix.inet_addr_of_string "127.0.0.1", 6379))
+  >>= fun () ->
+  (* Setup the socket to receive connection request.
+     Currently we are accepting 5 pending request *)
+  let max_pending_reqs = 5 in
+  Lwt_unix.listen server_socket max_pending_reqs;
+
+  Lwt_io.eprintf "Listenning on port 6379!\n" >>= fun () ->
+  let rec accept_loop () =
+    (* Accept connections on the given socket *)
+    Lwt_unix.accept server_socket >>= fun (client_socket, _) ->
+    Lwt.async (fun () -> handle_connection client_socket);
+    accept_loop ()
+  in
+  accept_loop () >>= fun () -> Lwt_unix.close server_socket
+
+let () = Lwt_main.run @@ server ()

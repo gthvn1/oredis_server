@@ -14,4 +14,7 @@
   "https://github.com/codecrafters-io/build-your-own-redis/issues")
  (license "MIT")
  (allow_empty true)
- (version 0.1))
+ (version 0.1)
+ (depends
+   lwt )
+ )
