@@ -11,7 +11,7 @@ let handle_connection socket =
     else
       let req = Bytes.sub_string buf 0 bytes_read in
       Lwt_io.eprintf "Received %d bytes from client\n" bytes_read >>= fun () ->
-      let answer = Redis_ser.respond_to req in
+      let answer = Redis.Resp.respond_to req in
       Lwt_unix.write socket (Bytes.of_string answer) 0 (String.length answer)
       >>= fun _ -> read_loop ()
   in
