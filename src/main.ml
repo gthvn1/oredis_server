@@ -11,11 +11,8 @@ let handle_connection socket =
     else
       let req = Bytes.sub_string buf 0 bytes_read in
       Lwt_io.eprintf "Received %d bytes from client\n" bytes_read >>= fun () ->
-      Lwt_io.eprintf "Request is: %s\n" req >>= fun () ->
-      (* Currently we are only supporting PING *)
-      let pong_str = "+PONG\r\n" in
-      Lwt_unix.write socket (Bytes.of_string pong_str) 0
-        (String.length pong_str)
+      let answer = Redis_ser.respond_to req in
+      Lwt_unix.write socket (Bytes.of_string answer) 0 (String.length answer)
       >>= fun _ -> read_loop ()
   in
   read_loop () >>= fun () -> Lwt_unix.close socket
