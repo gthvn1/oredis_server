@@ -1,4 +1,4 @@
-type t = Ping | Echo | Set | Get
+type t = Ping | Echo | Set | Get | Config
 
 module Set_options = struct
   type t = {
@@ -79,38 +79,72 @@ let of_string (str : string) : t option =
   else if str = "ECHO" then Some Echo
   else if str = "SET" then Some Set
   else if str = "GET" then Some Get
+  else if str = "CONFIG" then Some Config
   else None
 
-let execute (lst : string list) : string =
+let ping_cmd lst =
+  if List.is_empty lst then Resp.(Simple_strings "PONG" |> to_string)
+  else Resp.(Bulk_strings (Some (List.hd lst)) |> to_string)
+
+let echo_cmd lst =
+  if List.length lst <> 1 then
+    Resp.raise_parse_error "one argument is expected for echo";
+  Resp.(Bulk_strings (Some (List.hd lst)) |> to_string)
+
+let set_cmd lst =
+  if List.length lst < 2 then
+    Resp.raise_parse_error "At least key and value are expected for set";
+  let key = List.hd lst in
+  let value = Set_options.of_string_list (List.tl lst) in
+  Mem_storage.set db ~key ~value;
+  Resp.(Simple_strings "OK" |> to_string)
+
+let get_cmd lst =
   let open Resp in
-  if List.is_empty lst then raise_parse_error "Cannot execute an empty request";
+  if List.length lst <> 1 then raise_parse_error "key is expected for get";
+  match Mem_storage.get db ~key:(List.hd lst) with
+  | Some v ->
+      (* Before returning the value check that it is still valid *)
+      let now = Unix.gettimeofday () in
+      if v.px <> 0 && v.creation_time +. (Float.of_int v.px /. 1000.0) < now
+      then Resp.null_bulk_string
+      else if v.ex <> 0 && v.creation_time +. Float.of_int v.ex < now then
+        Resp.null_bulk_string
+      else Bulk_strings (Some v.value) |> to_string
+  | None -> null_bulk_string
+
+let config_cmd lst conf =
+  let open Resp in
+  if List.is_empty lst then raise_parse_error "Expected a config subcommand";
+  let subcmd = List.hd lst |> String.uppercase_ascii in
+  let rest = List.tl lst in
+  match subcmd with
+  | "GET" ->
+      if List.is_empty rest then
+        raise_parse_error "CONFIG GET expects a parameter";
+      let resp =
+        match List.hd rest with
+        | "dir" ->
+            Arrays
+              [ Bulk_strings (Some "dir"); Bulk_strings (Some (Conf.dir conf)) ]
+        | "dbfilename" ->
+            Arrays
+              [
+                Bulk_strings (Some "dbfilename");
+                Bulk_strings (Some (Conf.dbfilename conf));
+              ]
+        | _ -> raise_parse_error "CONFIG GET unknown parameter"
+      in
+      resp |> to_string
+  | _ -> raise_parse_error "Unknown config subcommand"
+
+let execute (lst : string list) (conf : Conf.t) : string =
+  if List.is_empty lst then
+    Resp.raise_parse_error "Cannot execute an empty request";
   match of_string (List.hd lst) with
-  | None -> raise_parse_error "Unknown command"
-  | Some Ping ->
-      if List.length lst = 1 then Simple_strings "PONG" |> to_string
-      else Bulk_strings (Some (List.nth lst 1)) |> to_string
-  | Some Echo ->
-      if List.length lst <> 2 then
-        raise_parse_error "one argument is expected for echo";
-      Bulk_strings (Some (List.nth lst 1)) |> to_string
-  | Some Set ->
-      let l = List.tl lst in
-      (* remove head that is the command *)
-      if List.length l < 2 then
-        raise_parse_error "At least key and value are expected for set";
-      let key = List.hd l in
-      let value = Set_options.of_string_list (List.tl l) in
-      Mem_storage.set db ~key ~value;
-      Simple_strings "OK" |> to_string
-  | Some Get -> (
-      if List.length lst <> 2 then raise_parse_error "key is expected for get";
-      match Mem_storage.get db ~key:(List.nth lst 1) with
-      | Some v ->
-          (* Before returning the value check that it is still valid *)
-          let now = Unix.gettimeofday () in
-          if v.px <> 0 && v.creation_time +. (Float.of_int v.px /. 1000.0) < now
-          then Resp.null_bulk_string
-          else if v.ex <> 0 && v.creation_time +. Float.of_int v.ex < now then
-            Resp.null_bulk_string
-          else Bulk_strings (Some v.value) |> to_string
-      | None -> null_bulk_string)
+  | None -> Resp.raise_parse_error "Unknown command"
+  | Some Ping -> ping_cmd (List.tl lst)
+  | Some Echo -> echo_cmd (List.tl lst)
+  | Some Set -> set_cmd (List.tl lst)
+  | Some Get -> get_cmd (List.tl lst)
+  | Some Config -> config_cmd (List.tl lst) conf

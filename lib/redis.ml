@@ -1,3 +1,4 @@
+module Conf = Conf
 open Resp
 
 module Internal = struct
@@ -21,7 +22,7 @@ module Internal = struct
     | Bulk_strings _ :: xs -> all_bulk_strings xs
     | _ -> false
 
-  let process (resp : t) : string =
+  let process (resp : t) (conf : Conf.t) : string =
     match resp with
     | Arrays elements ->
         if not (all_bulk_strings elements) then
@@ -38,11 +39,11 @@ module Internal = struct
                      strings")
             elements
         in
-        Cmd.execute lst
+        Cmd.execute lst conf
     | _ -> raise_parse_error "Other request than arrays are not implemented"
 end
 
-let respond_to (req : string) : string =
+let respond_to (req : string) (conf : Conf.t) : string =
   let open Printf in
   try
     printf "Parsing request ... \n";
@@ -50,5 +51,5 @@ let respond_to (req : string) : string =
     printf "  -> decoded (humain): %s\n" (to_human resp);
     printf "  -> decoded (string): %s\n" (to_string resp);
     flush_all ();
-    Internal.process resp
+    Internal.process resp conf
   with Parse_error s -> s
