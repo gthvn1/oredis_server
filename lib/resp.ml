@@ -1,12 +1,39 @@
 (* Link to REDIS Protocol: https://redis.io/docs/latest/develop/reference/protocol-spec/ *)
 
+(* For the first implementation of SET/GET we are using in-memory storage. *)
+let kv_store : (string, string) Hashtbl.t = Hashtbl.create 1024
+let kv_mutex = Mutex.create ()
+
+let set_kv (key : string) (value : string) : unit =
+  Mutex.lock kv_mutex;
+  Hashtbl.replace kv_store key value;
+  Mutex.unlock kv_mutex
+
+let get_kv (key : string) : string option =
+  Mutex.lock kv_mutex;
+  let result = Hashtbl.find_opt kv_store key in
+  Mutex.unlock kv_mutex;
+  result
+
 exception Parse_error of string
+
+module Cmd = struct
+  type t = Ping | Echo | Set | Get
+
+  let of_string (str : string) : t option =
+    let str = String.uppercase_ascii str in
+    if str = "PING" then Some Ping
+    else if str = "ECHO" then Some Echo
+    else if str = "SET" then Some Set
+    else if str = "GET" then Some Get
+    else None
+end
 
 module Resp = struct
   type t =
     | Simple_strings of string
     | Simple_errors of string
-    | Integers
+    | Integers of int
     | Bulk_strings of string option (* None is the empty string *)
     | Arrays of t list
     | Nulls
@@ -19,6 +46,8 @@ module Resp = struct
     | Attributes
     | Sets
     | Pushes
+
+  let null_bulk_string = "$-1\r\n"
 
   let rec to_string = function
     | Simple_strings s -> "+" ^ s ^ "\r\n"
@@ -98,18 +127,53 @@ module Resp = struct
       raise_parse_error "remaining data")
 
   (* https://redis.io/docs/latest/commands/command-docs/ *)
+
+  (* Currently we only have arrays of bulk strings. So check that the list is homogenous. *)
+  let rec all_bulk_strings (lst : t list) : bool =
+    match lst with
+    | [] -> true
+    | Bulk_strings _ :: xs -> all_bulk_strings xs
+    | _ -> false
+
   let execute (resp : t) : string =
     match resp with
-    | Arrays [ Bulk_strings (Some cmd) ] ->
-        let cmd = String.uppercase_ascii cmd in
-        if cmd = "PING" then Simple_strings "PONG" |> to_string
-        else raise_parse_error "Command unknown"
-    | Arrays [ Bulk_strings (Some cmd); Bulk_strings (Some param) ] ->
-        let cmd = String.uppercase_ascii cmd in
-        if cmd = "ECHO" || cmd = "PING" then
-          Bulk_strings (Some param) |> to_string
-        else raise_parse_error "Command unknown"
-    | _ -> raise_parse_error "Not implemented"
+    | Arrays elements -> (
+        if not (all_bulk_strings elements) then
+          raise_parse_error "Only Arrays of bulk strings is implemented";
+
+        let lst =
+          List.map
+            (fun b ->
+              match b with
+              | Bulk_strings None -> ""
+              | Bulk_strings (Some s) -> s
+              | _ ->
+                  failwith
+                    "unreachable because we checked that all elements are bulk \
+                     strings")
+            elements
+        in
+        match Cmd.of_string (List.hd lst) with
+        | None -> raise_parse_error "Unknown command"
+        | Some Ping ->
+            if List.length lst = 1 then Simple_strings "PONG" |> to_string
+            else Bulk_strings (Some (List.nth lst 1)) |> to_string
+        | Some Echo ->
+            if List.length lst <> 2 then
+              raise_parse_error "one argument is expected for echo";
+            Bulk_strings (Some (List.nth lst 1)) |> to_string
+        | Some Set ->
+            if List.length lst <> 3 then
+              raise_parse_error "key, value is expected for set";
+            set_kv (List.nth lst 1) (List.nth lst 2);
+            Simple_strings "OK" |> to_string
+        | Some Get -> (
+            if List.length lst <> 2 then
+              raise_parse_error "key is expected for get";
+            match get_kv (List.nth lst 1) with
+            | Some s -> Bulk_strings (Some s) |> to_string
+            | None -> null_bulk_string))
+    | _ -> raise_parse_error "Other request than arrays are not implemented"
 end
 
 let respond_to (req : string) : string =
