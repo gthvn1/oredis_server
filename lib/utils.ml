@@ -1,3 +1,15 @@
+(** [bytes_to_uint64_le b] returns the int64 value of [b]. We are expecting b in
+    little indian. *)
+let bytes_to_uint64_le (b : Bytes.t) : int64 =
+  let len = Bytes.length b in
+  let rec loop (acc : int64) (idx : int) =
+    if idx >= len then acc
+    else
+      let byte = Bytes.get b idx |> Char.code |> Int64.of_int in
+      loop Int64.(logor acc (shift_left byte (8 * idx))) (idx + 1)
+  in
+  loop 0L 0
+
 (** [is_digit c] returns true if [c] is a digit. *)
 let is_digit c = Char.code '0' <= Char.code c && Char.code c <= Char.code '9'
 

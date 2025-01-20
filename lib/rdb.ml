@@ -58,22 +58,6 @@ let parse_resizedb (ic : in_channel) : bool =
   Printf.printf "HashSZ: %d, Expire HashSZ: %d\n%!" hash_sz exp_hash_sz;
   false
 
-let parse_expiretimems (ic : in_channel) : bool =
-  (* It is an 8 bytes values *)
-  let sz = 8 in
-  let v = Bytes.create sz in
-  let _ = really_input ic v (In_channel.pos ic |> Int64.to_int) sz in
-  Printf.printf "Expiretimems: Skipping expire time in milliseconds\n%!";
-  false
-
-let parse_expiretime (ic : in_channel) : bool =
-  (* It is an 4 bytes values *)
-  let sz = 4 in
-  let v = Bytes.create sz in
-  let _ = really_input ic v (In_channel.pos ic |> Int64.to_int) sz in
-  Printf.printf "Expiretime: Skipping expire time in seconds\n%!";
-  false
-
 let parse_selectdb (ic : in_channel) : bool =
   let b = input_byte ic in
   if b <> 0 then (
@@ -86,25 +70,55 @@ let parse_eof (ic : in_channel) : bool =
   Printf.printf "TODO: Check CRC\n%!";
   true
 
-let parse_key_value (ty : int) (ic : in_channel) : bool =
+let parse_key_value ?(expire_time_ms = 0L) ~(ty : int) (ic : in_channel) : bool
+    =
   if ty <> 0 then
     raise (ParseError "Only string encoded is supported for key/value");
   let k = string_encoding ic in
   let v = string_encoding ic in
-  let resp = Cmd.set_cmd [ k; v ] in
-  Printf.printf "Added %s/%s: %s%!" k v resp;
-  false
+
+  if expire_time_ms = 0L then (
+    let resp = Cmd.set_cmd [ k; v ] in
+    Printf.printf "Added %s/%s: %s%!" k v resp;
+    false)
+  else
+    let current_time = Unix.gettimeofday () |> Int64.of_float in
+    let current_time_ms = Int64.mul current_time 1000L in
+    if expire_time_ms < current_time_ms then false
+    else
+      let ex = Int64.(sub expire_time_ms current_time_ms |> to_int) in
+      let resp = Cmd.set_cmd [ k; v; "ex"; string_of_int ex ] in
+      Printf.printf "Added %s/%s with ex %d: %s%!" k v ex resp;
+      false
+
+let get_expiretime (ic : in_channel) ~(sz : int) : int64 =
+  let v = Bytes.create sz in
+  try
+    let _ = really_input ic v 0 sz in
+    Utils.bytes_to_uint64_le v
+  with
+  | End_of_file -> raise @@ ParseError "Failed to get expire time, reached EOF"
+  | Invalid_argument s -> raise @@ ParseError s
 
 let rec parse_opcodes ic =
   let fini =
     match input_byte ic with
     | 0xFA -> parse_aux ic
     | 0xFB -> parse_resizedb ic
-    | 0xFC -> parse_expiretimems ic
-    | 0xFD -> parse_expiretime ic
+    | 0xFC ->
+        let expire_time_ms = get_expiretime ~sz:8 ic in
+        Printf.printf "DEBUG: FC: expire unix timestamp %Lu \n%!" expire_time_ms;
+        let ty = input_byte ic in
+        parse_key_value ~expire_time_ms ~ty ic
+    | 0xFD ->
+        let expire_time_s = get_expiretime ~sz:4 ic in
+        let expire_time_ms = Int64.mul expire_time_s 1000L in
+        Printf.printf "DEBUG: FD: expire unix timestamp %Lu \n%!" expire_time_ms;
+        let ty = input_byte ic in
+        parse_key_value ~expire_time_ms ~ty ic
     | 0xFE -> parse_selectdb ic
     | 0xFF -> parse_eof ic
-    | ty -> parse_key_value ty ic
+    | ty -> parse_key_value ~ty ic
   in
   if not fini then parse_opcodes ic
 
