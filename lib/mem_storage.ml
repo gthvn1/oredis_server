@@ -3,6 +3,11 @@ type 'a t = { store : (string, 'a) Hashtbl.t; mutex : Mutex.t }
 
 let create () : 'a t = { store = Hashtbl.create 1024; mutex = Mutex.create () }
 
+let iter (db : 'a t) ~(fn : string -> 'a -> unit) : unit =
+  Mutex.lock db.mutex;
+  Hashtbl.iter fn db.store;
+  Mutex.unlock db.mutex
+
 let set (db : 'a t) ~(key : string) ~(value : 'a) : unit =
   Mutex.lock db.mutex;
   Hashtbl.replace db.store key value;

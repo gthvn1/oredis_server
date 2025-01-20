@@ -1,4 +1,4 @@
-type t = Ping | Echo | Set | Get | Config
+type t = Ping | Echo | Set | Get | Config | Keys
 
 module Set_options = struct
   type t = {
@@ -80,6 +80,7 @@ let of_string (str : string) : t option =
   else if str = "SET" then Some Set
   else if str = "GET" then Some Get
   else if str = "CONFIG" then Some Config
+  else if str = "KEYS" then Some Keys
   else None
 
 let ping_cmd lst =
@@ -138,6 +139,13 @@ let config_cmd lst =
       resp |> to_string
   | _ -> raise_parse_error "Unknown config subcommand"
 
+let keys_cmd lst =
+  let p = List.hd lst in
+  Printf.printf "WARNING: pattern %s is not used for now\n%!" p;
+  let r = ref [] in
+  Mem_storage.iter db ~fn:(fun k _ -> r := Resp.Bulk_strings (Some k) :: !r);
+  Resp.(Arrays !r |> to_string)
+
 let execute (lst : string list) : string =
   if List.is_empty lst then
     Resp.raise_parse_error "Cannot execute an empty request";
@@ -148,3 +156,4 @@ let execute (lst : string list) : string =
   | Some Set -> set_cmd (List.tl lst)
   | Some Get -> get_cmd (List.tl lst)
   | Some Config -> config_cmd (List.tl lst)
+  | Some Keys -> keys_cmd (List.tl lst)
