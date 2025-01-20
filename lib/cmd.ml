@@ -113,7 +113,7 @@ let get_cmd lst =
       else Bulk_strings (Some v.value) |> to_string
   | None -> null_bulk_string
 
-let config_cmd lst conf =
+let config_cmd lst =
   let open Resp in
   if List.is_empty lst then raise_parse_error "Expected a config subcommand";
   let subcmd = List.hd lst |> String.uppercase_ascii in
@@ -126,19 +126,19 @@ let config_cmd lst conf =
         match List.hd rest with
         | "dir" ->
             Arrays
-              [ Bulk_strings (Some "dir"); Bulk_strings (Some (Conf.dir conf)) ]
+              [ Bulk_strings (Some "dir"); Bulk_strings (Some (Conf.dir ())) ]
         | "dbfilename" ->
             Arrays
               [
                 Bulk_strings (Some "dbfilename");
-                Bulk_strings (Some (Conf.dbfilename conf));
+                Bulk_strings (Some (Conf.dbfilename ()));
               ]
         | _ -> raise_parse_error "CONFIG GET unknown parameter"
       in
       resp |> to_string
   | _ -> raise_parse_error "Unknown config subcommand"
 
-let execute (lst : string list) (conf : Conf.t) : string =
+let execute (lst : string list) : string =
   if List.is_empty lst then
     Resp.raise_parse_error "Cannot execute an empty request";
   match of_string (List.hd lst) with
@@ -147,4 +147,4 @@ let execute (lst : string list) (conf : Conf.t) : string =
   | Some Echo -> echo_cmd (List.tl lst)
   | Some Set -> set_cmd (List.tl lst)
   | Some Get -> get_cmd (List.tl lst)
-  | Some Config -> config_cmd (List.tl lst) conf
+  | Some Config -> config_cmd (List.tl lst)

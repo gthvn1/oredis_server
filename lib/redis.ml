@@ -1,4 +1,6 @@
+(* Re-export the modules that are used by the main program *)
 module Conf = Conf
+module Rdb = Rdb
 open Resp
 
 module Internal = struct
@@ -22,7 +24,7 @@ module Internal = struct
     | Bulk_strings _ :: xs -> all_bulk_strings xs
     | _ -> false
 
-  let process (resp : t) (conf : Conf.t) : string =
+  let process (resp : t) : string =
     match resp with
     | Arrays elements ->
         if not (all_bulk_strings elements) then
@@ -39,11 +41,11 @@ module Internal = struct
                      strings")
             elements
         in
-        Cmd.execute lst conf
+        Cmd.execute lst
     | _ -> raise_parse_error "Other request than arrays are not implemented"
 end
 
-let respond_to (req : string) (conf : Conf.t) : string =
+let respond_to (req : string) : string =
   let open Printf in
   try
     printf "Parsing request ... \n";
@@ -51,5 +53,5 @@ let respond_to (req : string) (conf : Conf.t) : string =
     printf "  -> decoded (humain): %s\n" (to_human resp);
     printf "  -> decoded (string): %s\n" (to_string resp);
     flush_all ();
-    Internal.process resp conf
+    Internal.process resp
   with Parse_error s -> s

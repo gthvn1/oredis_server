@@ -1,6 +1,7 @@
 open Lwt.Infix (* Allow to use >>= *)
 
-let handle_connection socket redis_conf =
+(* Server connection *)
+let handle_connection socket =
   (* Read the request from client *)
   let buf_len = 1024 in
   let buf = Bytes.create buf_len in
@@ -11,13 +12,13 @@ let handle_connection socket redis_conf =
     else
       let req = Bytes.sub_string buf 0 bytes_read in
       Lwt_io.eprintf "Received %d bytes from client\n" bytes_read >>= fun () ->
-      let answer = Redis.respond_to req redis_conf in
+      let answer = Redis.respond_to req in
       Lwt_unix.write socket (Bytes.of_string answer) 0 (String.length answer)
       >>= fun _ -> read_loop ()
   in
   read_loop () >>= fun () -> Lwt_unix.close socket
 
-let server redis_conf =
+let server () =
   (* Create a TCP server socket: this is a synchrone function so no need to >>= *)
   let server_socket = Lwt_unix.(socket PF_INET SOCK_STREAM 0) in
   Lwt_unix.(setsockopt server_socket SO_REUSEADDR true);
@@ -35,12 +36,18 @@ let server redis_conf =
   let rec accept_loop () =
     (* Accept connections on the given socket *)
     Lwt_unix.accept server_socket >>= fun (client_socket, _) ->
-    Lwt.async (fun () -> handle_connection client_socket redis_conf);
+    Lwt.async (fun () -> handle_connection client_socket);
     accept_loop ()
   in
   accept_loop () >>= fun () -> Lwt_unix.close server_socket
 
-(* Parameters *)
+(* Process that saves data on the disk *)
+let rec save_db interval =
+  Lwt_unix.sleep interval >>= fun () ->
+  Redis.Rdb.save ();
+  save_db interval
+
+(* Main starts here with parameters *)
 let usage_msg = "--dir /tmp/redis-files --dbfilename dump.rdb"
 let dir_conf = ref "/tmp/redis-files"
 let dbfilename_conf = ref "dump.rdb"
@@ -55,5 +62,7 @@ let conflist =
 
 let () =
   Arg.parse conflist (fun _ -> ()) usage_msg;
-  let conf = Redis.Conf.create ~dir:!dir_conf ~dbfilename:!dbfilename_conf in
-  Lwt_main.run @@ server conf
+  Redis.Conf.set_dir !dir_conf;
+  Redis.Conf.set_dbfilename !dbfilename_conf;
+  Redis.Rdb.load ();
+  Lwt_main.run (Lwt.join [ server (); save_db 60.0 ])

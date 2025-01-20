@@ -1,5 +1,6 @@
 type t
 
-val create : dir:string -> dbfilename:string -> t
-val dir : t -> string
-val dbfilename : t -> string
+val dir : unit -> string
+val set_dir : string -> unit
+val dbfilename : unit -> string
+val set_dbfilename : string -> unit
