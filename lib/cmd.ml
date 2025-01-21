@@ -1,4 +1,4 @@
-type t = Ping | Echo | Set | Get | Config | Keys
+type t = Ping | Echo | Set | Get | Config | Keys | Info
 
 module Set_options = struct
   type t = {
@@ -81,6 +81,7 @@ let of_string (str : string) : t option =
   else if str = "GET" then Some Get
   else if str = "CONFIG" then Some Config
   else if str = "KEYS" then Some Keys
+  else if str = "INFO" then Some Info
   else None
 
 let ping_cmd lst =
@@ -146,6 +147,18 @@ let keys_cmd lst =
   Mem_storage.iter db ~fn:(fun k _ -> r := Resp.Bulk_strings (Some k) :: !r);
   Resp.(Arrays !r |> to_string)
 
+let info_cmd lst =
+  let open Resp in
+  let section = List.hd lst |> String.lowercase_ascii in
+  if section <> "replication" then
+    raise_parse_error "Only replication is supported for now";
+
+  (*TODO: use real information and complete the request *)
+  let reply = "#Replication\r\n" in
+  let reply = reply ^ "role:master\r\n" in
+  let reply = reply ^ "connected_slaves:0" in
+  Bulk_strings (Some reply) |> to_string
+
 let execute (lst : string list) : string =
   if List.is_empty lst then
     Resp.raise_parse_error "Cannot execute an empty request";
@@ -157,3 +170,4 @@ let execute (lst : string list) : string =
   | Some Get -> get_cmd (List.tl lst)
   | Some Config -> config_cmd (List.tl lst)
   | Some Keys -> keys_cmd (List.tl lst)
+  | Some Info -> info_cmd (List.tl lst)
